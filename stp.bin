@@ -1,0 +1,445 @@
+/*
+    Copyright 2016 Jaycliff Arcilla of Eversun Software Philippines Corporation
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+*/
+/*global window, setTimeout, Howl, Howler*/
+(function (window, Howl, Howler, undef) {
+    "use strict";
+    window.createSingleTrackPlayer = function createSingleTrackPlayer(options) {
+        var file_input = document.createElement('input'),
+            stepChoker,
+            shared_step_choker_cycler = Howler.sharedWorkerTicker,
+            single_track_player,
+            map_of_handler_lists = {},
+            map_of_deferred_deletions = {},
+            map_of_call_status = {},
+            callHandlers,
+            fns_id,
+            formatNotSupported,
+            is_loading = false,
+            is_playing = false,
+            stp_autoplay = false,
+            do_not_fire_loop = false,
+            audio,
+            createHowlObject,
+            howl_options = {
+                format: [],
+                //html5: true,
+                loop: false,
+                mute: false,
+                preload: false,
+                rate: 1,
+                src: [],
+                volume: 1,
+                onstop: function onstop() {
+                    console.log('track stopped');
+                },
+                onend: function onend() {
+                    // Unloading a howl sound triggers the onend event
+                    if (!do_not_fire_loop && howl_options.loop) {
+                        callHandlers('trackloop');
+                        callHandlers('trackupdate', '"' + this._file_name + '" has looped!');
+                    } else {
+                        // Each of a howler's sub-instances can emit an end event when finished.
+                        if (!audio.playing()) {
+                            is_playing = false;
+                            callHandlers('trackend');
+                            callHandlers('trackupdate', '"' + this._file_name + '" has finished playing!');
+                        }
+                    }
+                    if (do_not_fire_loop) {
+                        do_not_fire_loop = false;
+                    }
+                },
+                onload: function onload() {
+                    clearTimeout(fns_id);
+                    is_loading = false;
+                    file_input.value = '';
+                    if (stp_autoplay) {
+                        audio.play();
+                        callHandlers('trackplay');
+                    }
+                    callHandlers('trackready');
+                    callHandlers('trackupdate', '"' + this._file_name + '" has been loaded!');
+                }
+            };
+        window.file_input = file_input; // Debug
+        if (typeof options === "object") {
+            if (options.bridgeNode) {
+                howl_options.bridgeNode = options.bridgeNode;
+            }
+            if (options.detourNode) {
+                howl_options.detourNode = options.detourNode;
+            }
+        }
+        file_input.setAttribute('type', 'file');
+        file_input.setAttribute('name', 'track-loader');
+        //file_input.setAttribute('accept', 'audio/*');
+        file_input.setAttribute('accept', '.mp3,.wav,.ogg,.webm');
+        file_input.setAttribute('style', 'display: none !important;');
+        //document.body.appendChild(file_input);
+        function arrayAscendingSort(a, b) {
+            return a - b;
+        }
+        callHandlers = function callHandlers(event_name, param) {
+            var i, length, list, item, deferred, def_len, offset, next_item;
+            if (map_of_handler_lists.hasOwnProperty(event_name)) {
+                map_of_call_status[event_name] = true;
+                list = map_of_handler_lists[event_name];
+                for (i = 0, length = list.length; i < length; i += 1) {
+                    item = list[i];
+                    item.call(single_track_player, param);
+                    if (item.stp_run_only_once) {
+                        delete item.stp_run_only_once;
+                        single_track_player.off(event_name, item);
+                    }
+                }
+                map_of_call_status[event_name] = false;
+                deferred = map_of_deferred_deletions[event_name];
+                if (deferred.length > 0) {
+                    deferred.sort(arrayAscendingSort);
+                    for (length = length - deferred.length, i = deferred.shift(), def_len = deferred.length, offset = 1; i < length; i += 1) {
+                        next_item = list[i + offset];
+                        while (def_len > 0 && next_item === deferred[0]) {
+                            deferred.shift();
+                            def_len = deferred.length;
+                            offset += 1;
+                            next_item = list[i + offset];
+                        }
+                        list[i] = next_item;
+                    }
+                    list.length = length;
+                    deferred.length = 0;
+                }
+            }
+        };
+        formatNotSupported = function formatNotSupported() {
+            is_loading = false;
+            file_input.value = '';
+            callHandlers('error', '"' + audio._file_name + '" has a format that is not supported by this application.');
+            audio = undef;
+        };
+        stepChoker = (function () {
+            var onstep,
+                increment,
+                counter = 0,
+                steps = 60,
+                sound_volume,
+                running = false;
+            onstep = function () {
+                var percent_volume = 1 - (increment * counter), calculated_volume = (percent_volume * percent_volume) * sound_volume;
+                audio.volume(calculated_volume);
+            };
+            function looper() {
+                if (running) { // Why the seemingly-unnecessary check? Because the removal of any cycler listener is not instantaneous (doesn't happen in the same browser tick / cycle).
+                    onstep();
+                    counter += 1;
+                    if (counter === steps) {
+                        stepChoker.stop();
+                    }
+                }
+            }
+            return {
+                running: function () {
+                    return running;
+                },
+                steps: function (value) {
+                    value = Math.floor(Number(value)) || 0;
+                    if (value <= 0) {
+                        value = 1;
+                    }
+                    steps = value;
+                    if (running && counter >= steps) {
+                        stepChoker.stop();
+                    }
+                    return this;
+                },
+                run: function () {
+                    if (!running) {
+                        running = true;
+                        sound_volume = audio.volume();
+                        // Use the set steps, or the remaining time in steps, whichever is smaller
+                        increment = 1 / Math.min(steps, Math.ceil((audio.duration() - audio.seek()) * 1000));
+                        shared_step_choker_cycler.addListener(looper);
+                    }
+                    return this;
+                },
+                stop: function () {
+                    if (running) {
+                        shared_step_choker_cycler.removeListener(looper);
+                        counter = 0;
+                        audio.stop().volume(sound_volume);
+                        running = false;
+                    }
+                    return this;
+                }
+            };
+        }());
+        createHowlObject = (function () {
+            var the_file = null, loadAid = (function () {
+                var helper = new Audio();
+                helper.onloadedmetadata = function () {
+                    var duration = Math.floor(this.duration);
+                    if (duration > 45) {
+                        howl_options.html5 = true;
+                        howl_options.loop = false;
+                    } else {
+                        howl_options.html5 = false;
+                        howl_options.loop = true;
+                    }
+                    this.src = '';
+                    audio = new Howl(howl_options);
+                    audio._file_name = the_file.name;
+                    audio.load();
+                    fns_id = setTimeout(formatNotSupported, 30000);
+                };
+                return function loadAid(url) {
+                    helper.src = url;
+                };
+            }());
+            return function createHowlObject(file) {
+                var src = howl_options.src, format = howl_options.format, url;
+                the_file = file;
+                format.length = 0;
+                format.push(file.type.substring(file.type.indexOf('/') + 1));
+                if (src.length > 0) {
+                    URL.revokeObjectURL(src.pop());
+                    console.log('Revoking object url...');
+                }
+                url = URL.createObjectURL(file);
+                src.push(url);
+                console.log('Creating object url...');
+                loadAid(url);
+            };
+        }());
+        file_input.onchange = function () {
+            var files_list = this.files, file;
+            if (files_list.length > 0) {
+                file = this.files[0];
+                if (!is_loading) {
+                    is_loading = true;
+                    if (audio instanceof Howl) {
+                        audio.unload();
+                        callHandlers('trackupdate', 'Unloading "' + audio._file_name + '".');
+                        audio = undef;
+                    }
+                    if (file.type.indexOf('audio') === 0) {
+                        createHowlObject(file);
+                        callHandlers('loadstart');
+                        callHandlers('trackupdate', 'Now loading "' + file.name + '", please wait.');
+                    } else {
+                        is_loading = false;
+                        this.value = '';
+                        callHandlers('loaderror', '"' + file.name + '" is not a sound file! Please select an actual sound file.');
+                    }
+                } else {
+                    this.value = '';
+                    callHandlers('error', 'Failed to load "' + file.name + '", still processing "' + audio._file_name + '".');
+                }
+            }
+        };
+        function addEventListener(event_name, handler, run_only_once) {
+            var list;
+            if (typeof handler === "function") {
+                if (!map_of_handler_lists.hasOwnProperty(event_name)) {
+                    list = [];
+                    map_of_handler_lists[event_name] = list;
+                    map_of_deferred_deletions[event_name] = [];
+                    map_of_call_status[event_name] = false;
+                } else {
+                    list = map_of_handler_lists[event_name];
+                }
+                if (list.indexOf(handler) < 0) {
+                    if (run_only_once) {
+                        handler.stp_run_only_once = true;
+                    }
+                    list.push(handler);
+                }
+            }
+        }
+        single_track_player = {
+            autoplay: function autoplay(value) {
+                if (arguments.length > 0) {
+                    stp_autoplay = !!value;
+                    return single_track_player;
+                }
+                return stp_autoplay;
+            },
+            duration: function duration() {
+                if (audio instanceof Howl) {
+                    return audio.duration();
+                }
+                return 0;
+            },
+            fade: function fade(from, to, duration) {
+                if (audio instanceof Howl && arguments.length > 0) {
+                    audio.fade(from, to, duration);
+                }
+                return single_track_player;
+            },
+            getAudio: function getAudio() {
+                return audio;
+            },
+            getFileName: function getFileName() {
+                if (audio instanceof Howl) {
+                    return audio._file_name;
+                }
+                return '';
+            },
+            loop: function loop(value) {
+                if (arguments.length > 0) {
+                    value = !!value;
+                    howl_options.loop = value;
+                    if (audio instanceof Howl) {
+                        audio.loop(value);
+                    }
+                    return single_track_player;
+                }
+                return howl_options.loop;
+            },
+            mute: function mute(value) {
+                if (arguments.length > 0) {
+                    value = !!value;
+                    howl_options.mute = value;
+                    if (audio instanceof Howl) {
+                        audio.mute(value);
+                    }
+                    return single_track_player;
+                }
+                return howl_options.mute;
+            },
+            off: function off(event_name, handler) {
+                var list, index = -1, i, length;
+                if (typeof handler === "function") {
+                    if (map_of_handler_lists.hasOwnProperty(event_name)) {
+                        list = map_of_handler_lists[event_name];
+                        index = list.indexOf(handler);
+                        if (index > -1) {
+                            if (!map_of_call_status[event_name]) {
+                                for (i = index, length = list.length - 1; i < length; i += 1) {
+                                    list[i] = list[i + 1];
+                                }
+                                list.length = length;
+                                //list.pop();
+                            } else {
+                                // Do the other removal method here okay?
+                                map_of_deferred_deletions[event_name].push(index);
+                            }
+                        }
+                    }
+                }
+                return single_track_player;
+            },
+            on: function on(event_name, handler) {
+                addEventListener(event_name, handler, false);
+                return single_track_player;
+            },
+            one: function one(event_name, handler) {
+                addEventListener(event_name, handler, true);
+                return single_track_player;
+            },
+            open: function open() {
+                if (!is_loading) {
+                    //file_input.focus();
+                    file_input.click();
+                }
+                return single_track_player;
+            },
+            pause: function pause() {
+                if (audio instanceof Howl) {
+                    audio.pause();
+                    callHandlers('trackpause');
+                }
+                return single_track_player;
+            },
+            play: function play() {
+                if (audio instanceof Howl && !is_loading && !is_playing) {
+                    is_playing = true;
+                    if (stepChoker.running()) {
+                        stepChoker.stop();
+                    }
+                    audio.play();
+                    callHandlers('trackplay');
+                }
+                return single_track_player;
+            },
+            playing: function playing() {
+                return is_playing;
+            },
+            rate: function rate(value) {
+                if (arguments.length > 0) {
+                    value = Number(value);
+                    howl_options.rate = value;
+                    if (audio instanceof Howl) {
+                        audio.rate(value);
+                    }
+                    return single_track_player;
+                }
+                return howl_options.rate;
+            },
+            seek: function seek(value) {
+                if (audio instanceof Howl) {
+                    if (arguments.length > 0) {
+                        audio.seek(value);
+                        return single_track_player;
+                    }
+                    return audio.seek();
+                }
+                return 0;
+            },
+            stop: function stop() {
+                if (!is_loading && is_playing) {
+                    //audio.stop();
+                    is_playing = false;
+                    stepChoker.run();
+                    callHandlers('trackstop');
+                }
+                return single_track_player;
+            },
+            trigger: function trigger(event_name, param) {
+                if (arguments.length > 0) {
+                    callHandlers(event_name, param);
+                }
+                return single_track_player;
+            },
+            unload: function unload() {
+                if (audio instanceof Howl) {
+                    callHandlers('unload');
+                    callHandlers('trackupdate', 'Unloading "' + audio._file_name + '".');
+                    if (audio.playing()) {
+                        do_not_fire_loop = true;
+                    }
+                    audio.unload();
+                    audio = undef;
+                }
+                return single_track_player;
+            },
+            volume: function volume(value) {
+                if (arguments.length > 0) {
+                    value = Number(value);
+                    howl_options.volume = value;
+                    if (audio instanceof Howl) {
+                        audio.volume(value);
+                    }
+                    return single_track_player;
+                }
+                return howl_options.volume;
+            }
+        };
+        if (typeof Object.freeze === "function") {
+            return Object.freeze(single_track_player);
+        }
+        return single_track_player;
+    };
+}(window, typeof Howl === "function" && Howl, typeof Howler === "object" && Howler));

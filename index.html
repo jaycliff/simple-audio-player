@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>AP</title>
+        <!-- <link rel="shortcut icon" href="https://myaccount.hetzner.co.za/favicon.ico" type="image/x-icon" /> -->
+        <!-- <link rel="stylesheet" type="text/css" href="css/normal.css" /> -->
+        <style type="text/css">
+            * {
+				margin: 0;
+				padding: 0;
+			}
+			#track-list-wrap ul {
+				padding-left: 10px;
+			}
+			#track-list-wrap ul li {
+				border: solid 1px #e0e0e0;
+				cursor: pointer;
+				margin-bottom: 10px;
+				padding: 5px 10px;
+			}
+        </style>
+        <script type="text/javascript" src="jquery-3.0.0.min.js"></script>
+        <script type="text/javascript" src="stp.bin"></script>
+        <script type="text/javascript">
+            (function (window, $) {
+                "use strict";
+                $(document).ready(function () {
+					var file_input = document.createElement('input'),
+						source_urls = [],
+						audio_element = new Audio(),
+						$clear = $('#clear').hide(),
+						$ul = $(document.createElement('ul'));
+					file_input.setAttribute('type', 'file');
+					file_input.setAttribute('multiple', true);
+					file_input.setAttribute('name', 'track-loader');
+					//file_input.setAttribute('accept', 'audio/*');
+					file_input.setAttribute('accept', '.mp3,.wav,.ogg,.webm');
+					file_input.setAttribute('style', 'display: none !important;');
+					file_input.onchange = (function () {
+						var track_list_wrap = document.getElementById('track-list-wrap'), li_pool = (function () {
+							var pool = [];
+							window.pool = pool;
+							return {
+								summon: function (text_content) {
+									var item;
+									if (pool.length > 0) {
+										item = pool.pop();
+									} else {
+										item = document.createElement('li');
+									}
+									item.textContent = text_content;
+									return item;
+								},
+								banish: function (item) {
+									var parent = item.parentElement;
+									if (parent) {
+										parent.removeChild(item);
+									}
+									item.removeAttribute('data-index');
+									item.textContent = '';
+									pool.push(item);
+								}
+							};
+						}());
+						function shave(parent) {
+							var children = parent.children;
+							while (parent.firstElementChild) {
+								li_pool.banish(parent.firstElementChild);
+							}
+						}
+						function clearTrackList(event) {
+							var k, len;
+							$ul.detach();
+							shave($ul[0]);
+							for (k = 0, len = source_urls.length; k < len; k += 1) {
+								URL.revokeObjectURL(source_urls[k]);
+							}
+							source_urls.length = 0;
+							if (event) {
+								$clear.hide();
+							}
+						}
+						$clear.on('click', clearTrackList);
+						return function () {
+							var files_list = this.files, file, k, len, li;
+							clearTrackList();
+							if (files_list.length > 0) {
+								console.log(files_list);
+								k = 0;
+								len = files_list.length;
+								while (k < len) {
+									file = files_list[k];
+									li = li_pool.summon(file.name);
+									li.setAttribute('data-index', source_urls.length);
+									source_urls.push(URL.createObjectURL(file));
+									k += 1;
+									$ul.append(li);
+								}
+								$ul.appendTo(track_list_wrap);
+								if ($clear.is(':hidden')) {
+									$clear.show();
+								}
+							}
+						};
+					}());
+					$ul.on('mousedown', 'li', function () {
+						audio_element.src = source_urls[this.dataset.index];
+					});
+					audio_element.controls = true;
+					audio_element.autoplay = true;
+					//audio_element.setAttribute('controls', true);
+					//audio_element.setAttribute('autoplay', true);
+					audio_element.addEventListener('loadedmetadata', function () {
+						console.log('Metadata is available!');
+					}, false);
+					audio_element.addEventListener('canplaythrough', function () {
+						console.log('Can now play without interruption!');
+					}, false);
+					audio_element.addEventListener('suspend', function () {
+						console.log('[SUSPEND] Audio may have now finished loading.');
+					}, false);
+					audio_element.addEventListener('emptied', function () {
+						console.log('emptied');
+					}, false);
+					document.getElementById('player-wrap').appendChild(audio_element);
+					document.getElementById('open').onclick = function () {
+						file_input.click();
+					};
+                });
+            }(window, (typeof jQuery === "function") ? jQuery : {}));
+        </script>
+    </head>
+    <body>
+        <!-- Template by Jaycliff Arcilla -->
+        <button type="button" id="open">Open</button>
+        <button type="button" id="clear">Clear</button>
+		<div id="player-wrap"></div>
+		<div id="track-list-wrap">
+			
+		</div>
+    </body>
+</html>
