@@ -21,23 +21,33 @@
 			}
         </style>
         <script type="text/javascript" src="jquery-3.0.0.min.js"></script>
-        <script type="text/javascript" src="jquery-sap.js"></script>
+        <script type="text/javascript" src="stp.bin"></script>
         <script type="text/javascript">
             (function (window, $) {
                 "use strict";
                 $(document).ready(function () {
 					var file_input = document.createElement('input'),
+						list_of_sources = [
+							'file:///D:/ARCILLA/Jaycliff%20Arcilla/data/agent/other/MWB/BGM/05-Turn%20To%20Dust%20(Inst)-[CRASH].ogg',
+							'file:///D:/ARCILLA/Jaycliff%20Arcilla/data/agent/other/MWB/BGM/BG1.ogg',
+							'file:///D:/ARCILLA/Jaycliff%20Arcilla/data/agent/other/MWB/BGM/BG2.ogg',
+							'file:///D:/ARCILLA/Jaycliff%20Arcilla/data/agent/other/MWB/BGM/BG3.ogg',
+							'file:///D:/ARCILLA/Jaycliff%20Arcilla/data/agent/other/MWB/BGM/BG4.ogg',
+							'file:///D:/ARCILLA/Jaycliff%20Arcilla/data/agent/other/MWB/BGM/07-Whirlwind%20Struggle(Inst)-[CRASH].ogg'
+						],
 						source_urls = [],
 						audio_element = new Audio(),
+						processInputList,
 						$clear = $('#clear').hide(),
 						$ul = $(document.createElement('ul'));
+					window.source_urls = source_urls; // Debug
 					file_input.setAttribute('type', 'file');
 					file_input.setAttribute('multiple', true);
 					file_input.setAttribute('name', 'track-loader');
 					//file_input.setAttribute('accept', 'audio/*');
 					file_input.setAttribute('accept', '.mp3,.wav,.ogg,.webm');
 					file_input.setAttribute('style', 'display: none !important;');
-					file_input.onchange = (function () {
+					processInputList = (function () {
 						var track_list_wrap = document.getElementById('track-list-wrap'), li_pool = (function () {
 							var pool = [];
 							window.pool = pool;
@@ -70,11 +80,15 @@
 							}
 						}
 						function clearTrackList(event) {
-							var k, len;
+							var k, len, url;
 							$ul.detach();
 							shave($ul[0]);
 							for (k = 0, len = source_urls.length; k < len; k += 1) {
-								URL.revokeObjectURL(source_urls[k]);
+								url = source_urls[k];
+								if (url.indexOf('blob:') > -1) {
+									console.log('Revoking objectURL: ' + url);
+									URL.revokeObjectURL(source_urls[k]);
+								}
 							}
 							source_urls.length = 0;
 							if (event) {
@@ -82,18 +96,29 @@
 							}
 						}
 						$clear.on('click', clearTrackList);
-						return function () {
-							var files_list = this.files, file, k, len, li;
+						window.finput = file_input; // Debug
+						return function (list) {
+							var item, k, len, li, index;
 							clearTrackList();
-							if (files_list.length > 0) {
-								console.log(files_list);
+							if (list.length > 0) {
+								console.log(list);
 								k = 0;
-								len = files_list.length;
+								len = list.length;
 								while (k < len) {
-									file = files_list[k];
-									li = li_pool.summon(file.name);
-									li.setAttribute('data-index', source_urls.length);
-									source_urls.push(URL.createObjectURL(file));
+									item = list[k];
+									//console.log(item);
+									//console.log(item.name + ': ' + (item instanceof File));
+									index = source_urls.length;
+									if (item instanceof File) {
+										li = li_pool.summon(item.name);
+										source_urls.push(URL.createObjectURL(item));
+									} else if (typeof item === "string") {
+										li = li_pool.summon(item.substring(item.lastIndexOf('\/') + 1));
+										source_urls.push(item);
+									} else {
+										throw new TypeError('Input must either be a file object or a string.');
+									}
+									li.setAttribute('data-index', index);
 									k += 1;
 									$ul.append(li);
 								}
@@ -104,6 +129,12 @@
 							}
 						};
 					}());
+					file_input.onchange = function onChange() {
+						processInputList(this.files);
+					};
+					document.getElementById('process-list').addEventListener('click', function () {
+						processInputList(list_of_sources);
+					}, false);
 					$ul.on('mousedown', 'li', function () {
 						audio_element.src = source_urls[this.dataset.index];
 					});
@@ -134,10 +165,12 @@
     <body>
         <!-- Template by Jaycliff Arcilla -->
         <button type="button" id="open">Open</button>
+        <button type="button" id="process-list">Open List</button>
         <button type="button" id="clear">Clear</button>
 		<div id="player-wrap"></div>
 		<div id="track-list-wrap">
 			
 		</div>
+		<!-- <audio id="inline-audio" src="file:///D:\ARCILLA\Jaycliff Arcilla\data\agent\other\MWB\BGM\05-Turn To Dust (Inst)-[CRASH].ogg" controls></audio> -->
     </body>
 </html>
